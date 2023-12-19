@@ -27,3 +27,27 @@ resource "aws_s3_bucket_acl" "tierplatform" {
   bucket = aws_s3_bucket.tierplatform.id
   acl    = "public-read"
 }
+
+data "aws_iam_policy_document" "bucket-policy" {
+  statement {
+    principals {
+      type = "AWS"
+      identifiers = ["*"]
+    }
+
+    effect = "Allow"
+    actions = [
+      "s3:GetObject",
+      ]
+    resources = [
+      aws_s3_bucket.tierplatform.arn,
+      "${aws_s3_bucket.tierplatform.arn}/*",
+      ]
+  }
+}
+
+resource "aws_s3_bucket_policy" "bucket-policy" {
+  depends_on = [ aws_s3_bucket_acl.tierplatform ]
+  bucket = aws_s3_bucket.tierplatform.id
+  policy = data.aws_iam_policy_document.bucket-policy.json
+}

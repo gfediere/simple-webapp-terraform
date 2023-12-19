@@ -6,3 +6,7 @@ output "instance_ips" {
 output mongoDBIP {
     value = aws_instance.mongoDB.private_ip
 }
+
+output "website_url" {
+  value = "http://${aws_s3_bucket.tierplatform.bucket}.s3-website.${var.region}.amazonaws.com"
+}

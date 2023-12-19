@@ -4,37 +4,14 @@ resource "aws_security_group" "mongoDB" {
         from_port   = 22
         to_port     = 22
         protocol    = "tcp"
-        #cidr_blocks = ["0.0.0.0/0"]
-        cidr_blocks = module.vpc.private_subnets_cidr_blocks
-    }
-    ingress {
-        from_port   = 22
-        to_port     = 22
-        protocol    = "tcp"
-        #cidr_blocks = ["0.0.0.0/0"]
-        cidr_blocks = module.vpc.public_subnets_cidr_blocks
-    }
-    ingress {
-        from_port   = 27017
-        to_port     = 27017
-        protocol    = "tcp"
         cidr_blocks = [var.myIP]
-        #cidr_blocks = module.vpc.public_subnets_cidr_blocks
-    }    
-    ingress {
-        from_port   = 27017
-        to_port     = 27017
-        protocol    = "tcp"
-        #cidr_blocks = ["0.0.0.0/0"]
-        cidr_blocks = module.vpc.public_subnets_cidr_blocks
-    }    
-    ingress {
-        from_port   = 27017
-        to_port     = 27017
-        protocol    = "tcp"
-        #cidr_blocks = ["0.0.0.0/0"]
-        cidr_blocks = module.vpc.private_subnets_cidr_blocks
     }
+    ingress {
+        from_port   = 27017
+        to_port     = 27017
+        protocol    = "tcp"
+        cidr_blocks = flatten([var.myIP, module.vpc.public_subnets_cidr_blocks, module.vpc.private_subnets_cidr_blocks])
+    }    
     egress {
         from_port        = 0
         to_port          = 0
@@ -49,11 +26,20 @@ resource "aws_key_pair" "guigui" {
   public_key = file("~/.ssh/guigui.pub")
 }
 
-resource "aws_network_interface" "mongoDB" {
-    subnet_id   = "${element(module.vpc.public_subnets, 0)}"
-    private_ips     = ["10.0.48.159"]
-    tags = local.tags
-    security_groups = [aws_security_group.mongoDB.id]
+data "aws_iam_policy_document" "policy" {
+  statement {
+    effect = "Allow"
+    actions = ["ec2:*"]
+    resources = ["*"]
+  }
+  statement {
+    effect = "Allow"
+    actions = ["s3:*"]
+    resources = [
+      "arn:aws:s3:::${aws_s3_bucket.tierplatform.bucket}",
+      "arn:aws:s3:::${aws_s3_bucket.tierplatform.bucket}/*"
+    ]
+  }
 }
 
 data "aws_iam_policy_document" "assume_role" {
@@ -67,30 +53,14 @@ data "aws_iam_policy_document" "assume_role" {
   }
 }
 
-data "aws_iam_policy_document" "policy" {
-  statement {
-    effect = "Allow"
-    actions = ["ec2:*"]
-    resources = ["*"]
-  }
-  statement {
-    effect = "Allow"
-    actions = ["s3:*"]
-    resources = [
-      "arn:aws:s3:::${aws_s3_bucket.tierplatform.bucket}/",
-      "arn:aws:s3:::${aws_s3_bucket.tierplatform.bucket}/*"
-    ]
-  }
+resource "aws_iam_policy" "policy" {
+  name        = "MongoDB-policy"
+  policy      = data.aws_iam_policy_document.policy.json
 }
 
 resource "aws_iam_role" "role" {
   name               = "mongoDB_role"
   assume_role_policy = data.aws_iam_policy_document.assume_role.json
-}
-
-resource "aws_iam_policy" "policy" {
-  name        = "MongoDB-policy"
-  policy      = data.aws_iam_policy_document.policy.json
 }
 
 resource "aws_iam_policy_attachment" "mongodb-attach" {
@@ -113,11 +83,6 @@ resource "aws_instance" "mongoDB" {
     subnet_id = "${element(module.vpc.public_subnets, 0)}"
     associate_public_ip_address = true
     vpc_security_group_ids = [aws_security_group.mongoDB.id]
-    
-    #network_interface {
-    #    network_interface_id = aws_network_interface.mongoDB.id
-    #    device_index         = 0
-    #}
 
   user_data = <<EOF
 #!/bin/bash
@@ -134,6 +99,9 @@ sudo sed -i s/127.0.0.1/0.0.0.0/g /etc/mongod.conf
 sudo /etc/init.d/mongod start
 
 mongo webapp --eval 'db.createUser({user: "webapp",pwd: "${var.DBPassword}",roles: [ { role: "readWrite", db: "webapp" } ]})'
+echo "#!/bin/bash
+mongodump --db=webapp --archive=/tmp/\$(date +%Y-%m-%d.%H-%M).gzip --gzip && s3put  -b ${aws_s3_bucket.tierplatform.bucket} /tmp/\$(date +%Y-%m-%d.%H-%M).gzip" | sudo tee /etc/cron.hourly/backup_db
+sudo chmod +x /etc/cron.hourly/backup_db
 
 EOF
     tags = merge(
